@@ -1,8 +1,10 @@
-﻿using System.Text.Json.Nodes;
+﻿using System.Net;
+using System.Net.Http.Headers;
 using Newtonsoft.Json;
 using osu.NET;
 using osu.NET.Authorization;
 using osu.NET.Enums;
+using System.Text.Json.Nodes;
 using JsonSerializer = System.Text.Json.JsonSerializer;
 
 Console.WriteLine("@sore guys hows things");
@@ -20,7 +22,7 @@ foreach (var userId in userIds)
         if (userResponse.IsFailure)
         {
             Console.WriteLine($"{userId} user query failed: {userResponse.Error}");
-            File.AppendAllLines("output.csv", [",,,,,,,,,,"]);
+            File.AppendAllLines("output.csv", [",,,,,,,,,,,,,,,,,,,"]);
             await Task.Delay(100);
             continue;
         }
@@ -37,6 +39,11 @@ foreach (var userId in userIds)
         var percentageOfHr = 0.0;
         var percentageOfLazer = 0.0;
 
+        var percentageOfHdOnly = 0.0;
+        var percentageOfHdHrOnly = 0.0;
+        var percentageOfHdDtOnly = 0.0;
+        var percentageOfDtOnly = 0.0;
+
         if (userScores.Length > 0)
         {
             percentageOfFl = userScores.Count(x => x.Mods.Any(m => m.Acronym == "FL")) / (double)userScores.Length;
@@ -45,13 +52,22 @@ foreach (var userId in userIds)
             percentageOfHr = userScores.Count(x => x.Mods.Any(m => m.Acronym == "HR")) / (double)userScores.Length;
             percentageOfLazer =
                 1 - userScores.Count(x => x.Mods.Any(m => m.Acronym == "CL")) / (double)userScores.Length;
+
+            percentageOfHdOnly = userScores.Count(s => s.Mods.Any(m => m.Acronym == "HD") && s.Mods.All(m => m.Acronym == "HD" || m.Acronym == "CL")) / (double)userScores.Length;
+            percentageOfHdHrOnly = userScores.Count(s => s.Mods.Any(m => m.Acronym == "HD") && s.Mods.Any(m => m.Acronym == "HR") && s.Mods.All(m => m.Acronym == "HD" || m.Acronym == "HR" || m.Acronym == "CL")) / (double)userScores.Length;
+            percentageOfHdDtOnly = userScores.Count(s => s.Mods.Any(m => m.Acronym == "HD") && s.Mods.Any(m => m.Acronym == "DT") && s.Mods.All(m => m.Acronym == "HD" || m.Acronym == "DT" || m.Acronym == "CL")) / (double)userScores.Length;
+            percentageOfDtOnly = userScores.Count(s => s.Mods.Any(m => m.Acronym == "DT") && s.Mods.All(m => m.Acronym == "DT" || m.Acronym == "CL")) / (double)userScores.Length;
         }
 
-        // username, rank, playtime, ranked score, %of lazer topscores, amount of badges, registration date, amount of #1s, % of fl scores, % of ez scores, ez medal
+        var top1 = await GetOsuStatsScoreCount(user.Username, 1, 1);
+        var top8 = await GetOsuStatsScoreCount(user.Username, 2, 8);
+        var top50 = await GetOsuStatsScoreCount(user.Username, 9, 50);
+
+        // username, rank, playtime, ranked score, %of lazer topscores, amount of badges, registration date, amount of #1s, % of fl scores, % of ez scores, ez medal, hd only, hdhr only, hddt only, dt only, hdfl medal, top1-1, top2-8, top9-50, is mapper
 
         File.AppendAllLines("output.csv",
         [
-            $"{user.Username},{user.Statistics?.GlobalRank},{user.Statistics?.PlayTime},{user.Statistics?.RankedScore},{percentageOfLazer:N6},{user.Badges?.Length ?? 0},{user.JoinDate},{user.FirstScoresCount},{percentageOfFl:N6},{percentageOfEz:N6},{percentageOfHd:N6},{percentageOfHr:N6},{user.Achievements?.Any(x => x.Id == 142) ?? false}"
+            $"{user.Username},{user.Statistics?.GlobalRank},{user.Statistics?.PlayTime},{user.Statistics?.RankedScore},{percentageOfLazer:N3},{user.Badges?.Length ?? 0},{user.JoinDate},{user.FirstScoresCount},{percentageOfFl:N3},{percentageOfEz:N3},{percentageOfHd:N3},{percentageOfHr:N3},{user.Achievements?.Any(x => x.Id == 142) ?? false},{percentageOfHdOnly:N3},{percentageOfHdHrOnly:N3},{percentageOfHdDtOnly:N3},{percentageOfDtOnly:N3},{user.Achievements?.Any(x => x.Id == 172) ?? false},{top1},{top8},{top50},{user.RankedBeatmapSetsCount > 0}"
         ]);
 
     }
@@ -104,7 +120,6 @@ async Task<LeScore[]> GetHuisScores(int userId)
 
 async Task<LeScore[]> GetOsuApiScores(int userId)
 {
-    await Task.Delay(100);
     var userScoresResponse =
         await client.GetUserScoresAsync(userId, UserScoreType.Best, limit: 100, ruleset: Ruleset.Osu);
     var userScores = userScoresResponse.Value;
@@ -125,6 +140,30 @@ async Task<LeScore[]> GetOsuApiScores(int userId)
 
     return userScores!.Concat(userScoresPage2!).Concat(userFirsts!).Concat(userPinned!).Select(x=> new LeScore() { Mods = x.Mods.Select(m=> new Mod() {Acronym = m.Acronym}).ToArray()}).ToArray();
 }
+
+async Task<int> GetOsuStatsScoreCount(string username, int rankMin, int rankMax)
+{
+    var http = new HttpClient();
+    var response = await http.PostAsync($"https://osustats.ppy.sh/api/getScores", new StringContent($"{{\"u1\":\"{username}\",\"rankMin\": \"{rankMin}\",\"rankMax\":\"{rankMax}\",\"gamemode\":\"0\"}}", new MediaTypeHeaderValue("application/json")));
+    var responseString = await response.Content.ReadAsStringAsync();
+    if (!response.IsSuccessStatusCode)
+    {
+        if (response.StatusCode != HttpStatusCode.BadRequest)
+            Console.WriteLine($"{username} failed to query osustats: {responseString}");
+
+        return 0;
+    }
+
+    if (string.IsNullOrEmpty(responseString))
+        return 0;
+
+    var deserialized = JsonSerializer.Deserialize<JsonArray>(responseString);
+    if (deserialized is null)
+        return 0;
+
+    return deserialized[1]?.GetValue<int>() ?? 0;
+}
+
 public class LeScore
 {
     public Mod[] Mods { get; set; }
