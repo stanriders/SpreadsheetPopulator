@@ -14,10 +14,14 @@ var client = new OsuApiClient(provider, null);
 
 var userIds = File.ReadAllLines("input.csv").Select(int.Parse).ToArray();
 
-foreach (var userId in userIds)
+for (var i = 0; i < userIds.Length; i++)
 {
+    var userId = userIds[i];
     try
     {
+        if(i % 100 == 0)
+            Console.WriteLine($"{i}/{userIds.Length}");
+
         var userResponse = await client.GetUserAsync(userId, Ruleset.Osu);
         if (userResponse.IsFailure)
         {
@@ -53,10 +57,20 @@ foreach (var userId in userIds)
             percentageOfLazer =
                 1 - userScores.Count(x => x.Mods.Any(m => m.Acronym == "CL")) / (double)userScores.Length;
 
-            percentageOfHdOnly = userScores.Count(s => s.Mods.Any(m => m.Acronym == "HD") && s.Mods.All(m => m.Acronym == "HD" || m.Acronym == "CL")) / (double)userScores.Length;
-            percentageOfHdHrOnly = userScores.Count(s => s.Mods.Any(m => m.Acronym == "HD") && s.Mods.Any(m => m.Acronym == "HR") && s.Mods.All(m => m.Acronym == "HD" || m.Acronym == "HR" || m.Acronym == "CL")) / (double)userScores.Length;
-            percentageOfHdDtOnly = userScores.Count(s => s.Mods.Any(m => m.Acronym == "HD") && s.Mods.Any(m => m.Acronym == "DT") && s.Mods.All(m => m.Acronym == "HD" || m.Acronym == "DT" || m.Acronym == "CL")) / (double)userScores.Length;
-            percentageOfDtOnly = userScores.Count(s => s.Mods.Any(m => m.Acronym == "DT") && s.Mods.All(m => m.Acronym == "DT" || m.Acronym == "CL")) / (double)userScores.Length;
+            percentageOfHdOnly =
+                userScores.Count(s =>
+                    s.Mods.Any(m => m.Acronym == "HD") && s.Mods.All(m => m.Acronym == "HD" || m.Acronym == "CL")) / (double)userScores.Length;
+            percentageOfHdHrOnly =
+                userScores.Count(s =>
+                    s.Mods.Any(m => m.Acronym == "HD") && s.Mods.Any(m => m.Acronym == "HR") &&
+                    s.Mods.All(m => m.Acronym == "HD" || m.Acronym == "HR" || m.Acronym == "CL")) / (double)userScores.Length;
+            percentageOfHdDtOnly =
+                userScores.Count(s =>
+                    s.Mods.Any(m => m.Acronym == "HD") && s.Mods.Any(m => m.Acronym == "DT") &&
+                    s.Mods.All(m => m.Acronym == "HD" || m.Acronym == "DT" || m.Acronym == "CL")) / (double)userScores.Length;
+            percentageOfDtOnly =
+                userScores.Count(s =>
+                    s.Mods.Any(m => m.Acronym == "DT") && s.Mods.All(m => m.Acronym == "DT" || m.Acronym == "CL")) / (double)userScores.Length;
         }
 
         var top1 = await GetOsuStatsScoreCount(user.Username, 1, 1);
@@ -69,7 +83,6 @@ foreach (var userId in userIds)
         [
             $"{user.Username},{user.Statistics?.GlobalRank},{user.Statistics?.PlayTime},{user.Statistics?.RankedScore},{percentageOfLazer:N3},{user.Badges?.Length ?? 0},{user.JoinDate},{user.FirstScoresCount},{percentageOfFl:N3},{percentageOfEz:N3},{percentageOfHd:N3},{percentageOfHr:N3},{user.Achievements?.Any(x => x.Id == 142) ?? false},{percentageOfHdOnly:N3},{percentageOfHdHrOnly:N3},{percentageOfHdDtOnly:N3},{percentageOfDtOnly:N3},{user.Achievements?.Any(x => x.Id == 172) ?? false},{top1},{top8},{top50},{user.RankedBeatmapSetsCount > 0}"
         ]);
-
     }
     catch (Exception e)
     {
@@ -125,20 +138,44 @@ async Task<LeScore[]> GetOsuApiScores(int userId)
     var userScores = userScoresResponse.Value;
     await Task.Delay(100);
 
-    var userScoresPage2Response =
-        await client.GetUserScoresAsync(userId, UserScoreType.Best, offset: 100, limit: 100, ruleset: Ruleset.Osu);
-    var userScoresPage2 = userScoresPage2Response.Value;
-    await Task.Delay(100);
+    try 
+    {
+        var userScoresPage2Response =
+            await client.GetUserScoresAsync(userId, UserScoreType.Best, offset: 100, limit: 100, ruleset: Ruleset.Osu);
+        var userScoresPage2 = userScoresPage2Response.Value;
+        userScores = userScores!.Concat(userScoresPage2!).ToArray();
+        await Task.Delay(100);
+    }
+    catch (Exception e)
+    {
+        Console.WriteLine($"{userId} failed to query userScoresPage2: {e.Message}");
+    }
 
-    var userPinnedResponse = await client.GetUserScoresAsync(userId, UserScoreType.Pinned, limit: 100, ruleset: Ruleset.Osu);
-    var userPinned = userPinnedResponse.Value;
-    await Task.Delay(200);
+    try
+    {
+        var userPinnedResponse = await client.GetUserScoresAsync(userId, UserScoreType.Pinned, limit: 100, ruleset: Ruleset.Osu);
+        var userPinned = userPinnedResponse.Value;
+        userScores = userScores!.Concat(userPinned!).ToArray();
+        await Task.Delay(200);
+    }
+    catch (Exception e)
+    {
+        Console.WriteLine($"{userId} failed to query userPinned: {e.Message}");
+    }
 
-    var userFirstsResponse =
+    try
+    {
+        var userFirstsResponse =
         await client.GetUserScoresAsync(userId, UserScoreType.First, limit: 100, ruleset: Ruleset.Osu);
-    var userFirsts = userFirstsResponse.Value;
+        var userFirsts = userFirstsResponse.Value;
+        userScores = userScores!.Concat(userFirsts!).ToArray();
+    }
+    catch (Exception e)
+    {
+        Console.WriteLine($"{userId} failed to query userFirsts: {e.Message}");
+    }
 
-    return userScores!.Concat(userScoresPage2!).Concat(userFirsts!).Concat(userPinned!).Select(x=> new LeScore() { Mods = x.Mods.Select(m=> new Mod() {Acronym = m.Acronym}).ToArray()}).ToArray();
+    return userScores!.Select(x=> new LeScore { Mods = x.Mods.Select(m=> new Mod {Acronym = m.Acronym}).ToArray()}).ToArray();
 }
 
 async Task<int> GetOsuStatsScoreCount(string username, int rankMin, int rankMax)
